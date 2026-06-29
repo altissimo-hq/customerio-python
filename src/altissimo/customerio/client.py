@@ -563,8 +563,11 @@ class CustomerIOClient:
         Returns:
             A ``SendResult`` with the API response details.
         """
-        # Wrap plain text in <pre> so it renders correctly in email clients
-        html_body = f'<pre style="font-family: sans-serif; white-space: pre-wrap;">{body}</pre>'
+        # Wrap plain text in <pre> so it renders correctly in email clients.
+        # Escape HTML entities to prevent accidental injection.
+        import html
+
+        html_body = f'<pre style="font-family: sans-serif; white-space: pre-wrap;">{html.escape(body)}</pre>'
         return self._send_inline(
             to=to,
             subject=subject,
