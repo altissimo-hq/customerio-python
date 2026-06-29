@@ -1,0 +1,148 @@
+# altissimo-customerio
+
+[![CI](https://github.com/altissimo-hq/customerio-python/actions/workflows/ci.yml/badge.svg)](https://github.com/altissimo-hq/customerio-python/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+
+Customer.io transactional email and messaging client for Altissimo Python projects.
+
+## Features
+
+- 📋 **Template emails** via `send_email()` — uses Customer.io transactional templates
+- 📧 **Plain text** emails via `send_text()` — inline content, no template required
+- 🎨 **HTML** emails via `send_html()` — inline content, no template required
+- 🌍 **Region support** — US and EU data centers
+- 🏗️ **Factory method** — `CustomerIOClient.from_env()` reads `CUSTOMERIO_API_KEY` from the environment
+- 🔌 **Optional dependency** — `customerio` SDK is lazily imported with a helpful error message
+- 📐 **Typed** — full type annotations with `py.typed` PEP 561 marker
+- ✅ **Consistent return type** — all methods return a `SendResult` dataclass
+- 🔄 **Retry with backoff** — configurable retry for transient failures
+
+## Requirements
+
+- Python 3.11+
+
+## Installation
+
+```bash
+pip install altissimo-customerio[customerio]   # core + Customer.io SDK
+```
+
+## Quick Start
+
+```python
+from altissimo.customerio import CustomerIOClient
+
+client = CustomerIOClient.from_env()
+
+# Template email (most common)
+result = client.send_email(
+    to="user@example.com",
+    transactional_message_id="3",
+    message_data={"first_name": "Alice", "year": 2026},
+)
+
+# Plain text
+result = client.send_text(
+    to="user@example.com",
+    subject="Hello",
+    body="Welcome aboard!",
+)
+
+# HTML
+result = client.send_html(
+    to="user@example.com",
+    subject="Hello",
+    html="<h1>Welcome!</h1>",
+    reply_to="support@example.com",
+)
+
+assert result.ok
+print(result.delivery_id)
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `CUSTOMERIO_API_KEY` | Customer.io App API key | *(required)* |
+| `CUSTOMERIO_REGION` | Data center region (`us` or `eu`) | `us` |
+
+### Constructor
+
+```python
+client = CustomerIOClient(
+    app_api_key="your-api-key",
+    region="us",                          # "us" or "eu"
+    default_from="noreply@lived.com",     # default sender
+    max_retries=3,                        # retry transient failures
+    retry_delay=1.0,                      # base delay (seconds)
+)
+```
+
+## API Reference
+
+### `CustomerIOClient`
+
+| Method | Description |
+|---|---|
+| `CustomerIOClient(app_api_key, region?, default_from?)` | Create a client with an explicit API key |
+| `CustomerIOClient.from_env(env_var?, region?, default_from?)` | Create a client from an environment variable |
+| `send_email(to, transactional_message_id, message_data?, ...)` | Send a template-based transactional email |
+| `send_text(to, subject, body, from_email?, reply_to?, ...)` | Send a plain-text email (inline content) |
+| `send_html(to, subject, html, from_email?, reply_to?, ...)` | Send an HTML email (inline content) |
+
+### `SendResult`
+
+| Field | Type | Description |
+|---|---|---|
+| `ok` | `bool` | Whether the request succeeded |
+| `delivery_id` | `str` | Delivery ID from Customer.io |
+| `status_code` | `int` | HTTP status code (0 on exception) |
+| `body` | `dict[str, Any]` | Response body |
+| `error` | `str \| None` | Error message on failure |
+
+## Architecture
+
+```text
+altissimo.customerio
+├── __init__.py       # Public API surface
+├── client.py         # CustomerIOClient with lazy SDK initialization
+├── exceptions.py     # CustomerIOError, CustomerIOImportError
+├── models.py         # EmailAddress, SendResult dataclasses
+└── py.typed          # PEP 561 marker
+```
+
+## Development
+
+```bash
+# Install all dependencies
+poetry sync
+
+# Run tests
+poetry run pytest
+
+# Run tests with coverage
+poetry run pytest --cov=altissimo --cov-report=term-missing
+
+# Run linters
+poetry run ruff check .
+poetry run ruff format --check .
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for version history.
+
+## Security
+
+For reporting security vulnerabilities, see [SECURITY.md](SECURITY.md).
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE) for details.

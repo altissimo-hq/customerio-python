@@ -1,0 +1,99 @@
+[project]
+name = "altissimo-customerio"
+version = "0.1.0"
+description = "Customer.io transactional email and messaging client for Altissimo projects"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [
+    { name = "Altissimo HQ" },
+]
+keywords = ["customerio", "email", "altissimo", "transactional"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+
+dependencies = []
+
+[project.optional-dependencies]
+customerio = ["customerio>=2.0,<3.0"]
+
+[project.urls]
+Homepage = "https://github.com/altissimo-hq/customerio-python"
+Repository = "https://github.com/altissimo-hq/customerio-python"
+Issues = "https://github.com/altissimo-hq/customerio-python/issues"
+Changelog = "https://github.com/altissimo-hq/customerio-python/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "altissimo-customerio"
+packages = [
+    { include = "altissimo", from = "src" },
+]
+
+[tool.poetry.group.dev.dependencies]
+mypy = ">=1.13"
+pytest = ">=8.0"
+pytest-cov = ">=6.0"
+ruff = ">=0.11"
+pre-commit = ">=4.0"
+
+# Include customerio in dev for testing
+customerio = ">=2.0,<3.0"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "S",    # flake8-bandit (security)
+    "SIM",  # flake8-simplify
+    "PT",   # flake8-pytest-style
+    "TCH",  # flake8-type-checking
+    "RUF",  # ruff-specific
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["altissimo"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers -v"
+
+[tool.coverage.run]
+source = ["altissimo"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = "src"
