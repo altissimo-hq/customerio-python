@@ -98,6 +98,12 @@ class CustomerIOClient:
             Set to ``0`` (default) to disable retries.
         retry_delay: Base delay in seconds between retries. Actual delay
             uses exponential backoff with jitter.
+        raise_on_error: If ``True`` (default), a failed send raises
+            :class:`CustomerIOSendError` instead of returning a
+            ``SendResult`` with ``ok=False``. Set to ``False`` for batch
+            sends where you want to inspect results and continue past a
+            failed recipient — but then you are responsible for checking
+            ``result.ok``, because nothing else will.
     """
 
     def __init__(
@@ -108,12 +114,14 @@ class CustomerIOClient:
         *,
         max_retries: int = 0,
         retry_delay: float = 1.0,
+        raise_on_error: bool = True,
     ) -> None:
         self._app_api_key = app_api_key
         self._region_str = region
         self._default_from = default_from
         self._max_retries = max_retries
         self._retry_delay = retry_delay
+        self._raise_on_error = raise_on_error
         self._client: APIClient | None = None
 
     @classmethod
@@ -125,6 +133,7 @@ class CustomerIOClient:
         default_from: EmailAddressLike | None = None,
         max_retries: int = 0,
         retry_delay: float = 1.0,
+        raise_on_error: bool = True,
     ) -> CustomerIOClient:
         """Create a client using an API key from an environment variable.
 
@@ -136,6 +145,7 @@ class CustomerIOClient:
             default_from: Default sender email address.
             max_retries: Maximum number of retry attempts for transient errors.
             retry_delay: Base delay in seconds between retries.
+            raise_on_error: Raise :class:`CustomerIOSendError` on send failure.
 
         Raises:
             ValueError: If the environment variable is not set.
@@ -152,6 +162,7 @@ class CustomerIOClient:
             default_from=default_from,
             max_retries=max_retries,
             retry_delay=retry_delay,
+            raise_on_error=raise_on_error,
         )
 
     @property
@@ -256,33 +267,48 @@ class CustomerIOClient:
 
     @staticmethod
     def _build_error_result(exc: Exception) -> SendResult:
-        """Build a ``SendResult`` from an exception."""
-        logger.exception("Customer.io API error")
+        """Build a ``SendResult`` from an exception.
 
+        Deliberately does not log at warning or above. The library has no
+        recipient, subject, or template context here, so a log emitted from
+        this frame is both unactionable and misleading — it makes the failure
+        look handled. Reporting is the caller's job: the exception is
+        preserved on the result, and the send methods either raise it or log
+        it with full context.
+        """
         status_code = 0
         if hasattr(exc, "status_code"):
             status_code = getattr(exc, "status_code", 0)
         elif hasattr(exc, "code"):
             status_code = getattr(exc, "code", 0)
 
+        logger.debug("Customer.io API error (status=%s)", status_code, exc_info=exc)
+
         return SendResult(
             ok=False,
             status_code=status_code,
             error=str(exc),
+            exception=exc,
         )
 
     # ------------------------------------------------------------------
     # Retry logic
     # ------------------------------------------------------------------
 
-    def _send_with_retry(self, send_fn: Any) -> SendResult:
+    def _send_with_retry(self, send_fn: Any, *, context: str = "") -> SendResult:
         """Execute a send function, retrying on transient failures with exponential backoff.
 
         Args:
             send_fn: A zero-argument callable that performs the API send.
+            context: Description of the send, used in retry logs and in the
+                raised exception message.
 
         Returns:
             A ``SendResult`` with the API response details.
+
+        Raises:
+            CustomerIOSendError: If the send failed and the client was
+                constructed with ``raise_on_error=True`` (the default).
         """
         last_result: SendResult | None = None
 
@@ -296,19 +322,26 @@ class CustomerIOClient:
                     last_result.status_code in _RETRYABLE_STATUS_CODES or last_result.status_code == 0
                 ):
                     logger.warning(
-                        "Customer.io error (status=%d), retrying (attempt %d/%d)",
+                        "Customer.io error (status=%d) for %s, retrying (attempt %d/%d)",
                         last_result.status_code,
+                        context or "send",
                         attempt + 1,
                         self._max_retries,
                     )
                     self._backoff(attempt)
                     continue
-                return last_result
+                return self._finalize(last_result, context)
 
             return self._build_result(response)
 
         # All retries exhausted
-        return last_result  # type: ignore[return-value]
+        return self._finalize(last_result, context)  # type: ignore[arg-type]
+
+    def _finalize(self, result: SendResult, context: str = "") -> SendResult:
+        """Raise if the send failed and ``raise_on_error`` is enabled, else return it."""
+        if self._raise_on_error:
+            result.raise_for_status(context or None)
+        return result
 
     def _backoff(self, attempt: int) -> None:
         """Sleep with exponential backoff and jitter."""
@@ -438,7 +471,8 @@ class CustomerIOClient:
                 preheader=preheader,
             )
 
-            result = self._send_with_retry(lambda r=request: self.client.send_email(r))
+            context = f"to={to_str} template={transactional_message_id}"
+            result = self._send_with_retry(lambda r=request: self.client.send_email(r), context=context)
             last_result = result
             if result.ok:
                 logger.info(
@@ -446,6 +480,15 @@ class CustomerIOClient:
                     transactional_message_id,
                     to_str,
                     result.delivery_id,
+                )
+            else:
+                # Only reachable when raise_on_error=False.
+                logger.warning(
+                    "Email send failed: template=%s to=%s status=%d error=%s",
+                    transactional_message_id,
+                    to_str,
+                    result.status_code,
+                    result.error,
                 )
 
         return last_result  # type: ignore[return-value]
@@ -567,7 +610,8 @@ class CustomerIOClient:
                 preheader=preheader,
             )
 
-            result = self._send_with_retry(lambda r=request: self.client.send_email(r))
+            context = f"to={to_str} subject={subject!r}"
+            result = self._send_with_retry(lambda r=request: self.client.send_email(r), context=context)
             last_result = result
             if result.ok:
                 logger.info(
@@ -575,6 +619,15 @@ class CustomerIOClient:
                     subject,
                     to_str,
                     result.delivery_id,
+                )
+            else:
+                # Only reachable when raise_on_error=False.
+                logger.warning(
+                    "Email send failed: subject=%r to=%s status=%d error=%s",
+                    subject,
+                    to_str,
+                    result.status_code,
+                    result.error,
                 )
 
         return last_result  # type: ignore[return-value]
