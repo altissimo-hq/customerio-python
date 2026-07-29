@@ -18,9 +18,24 @@ def fake_api_client() -> MagicMock:
 
 @pytest.fixture
 def client_with_mock(fake_api_client: MagicMock) -> Any:
-    """Return a ``CustomerIOClient`` wired to the fake API client."""
+    """Return a ``CustomerIOClient`` wired to the fake API client (default: raises on error)."""
     from altissimo.customerio import CustomerIOClient
 
     cio = CustomerIOClient(app_api_key="fake-api-key", region="us", default_from="sender@example.com")
+    cio._client = fake_api_client
+    return cio
+
+
+@pytest.fixture
+def client_no_raise(fake_api_client: MagicMock) -> Any:
+    """Return a ``CustomerIOClient`` in swallow mode, for exercising ``ok=False`` results."""
+    from altissimo.customerio import CustomerIOClient
+
+    cio = CustomerIOClient(
+        app_api_key="fake-api-key",
+        region="us",
+        default_from="sender@example.com",
+        raise_on_error=False,
+    )
     cio._client = fake_api_client
     return cio

@@ -18,6 +18,7 @@ Customer.io transactional email and messaging client for Altissimo Python projec
 - 📐 **Typed** — full type annotations with `py.typed` PEP 561 marker
 - ✅ **Consistent return type** — all methods return a `SendResult` dataclass
 - 🔄 **Retry with backoff** — configurable retry for transient failures
+- 🔔 **Fails loudly** — send failures raise `CustomerIOSendError` by default; opt out per client for batch sends
 
 ## Requirements
 
@@ -58,9 +59,50 @@ result = client.send_html(
     reply_to="support@example.com",
 )
 
-assert result.ok
 print(result.delivery_id)
 ```
+
+## Error Handling
+
+By default a failed send raises `CustomerIOSendError`. The originating SDK
+exception is preserved as `__cause__`, and the full `SendResult` is attached
+as `.result`:
+
+```python
+from altissimo.customerio import CustomerIOClient, CustomerIOSendError
+
+try:
+    result = client.send_html(to="user@example.com", subject="Hi", html="<p>Hi</p>")
+except CustomerIOSendError as exc:
+    logger.error("Reset email failed (status=%s): %s", exc.status_code, exc)
+else:
+    logger.info("Reset email sent: delivery_id=%s", result.delivery_id)
+```
+
+For batch sends where one bad recipient should not abort the run, opt out and
+check `result.ok` yourself:
+
+```python
+client = CustomerIOClient.from_env(raise_on_error=False)
+
+for user in users:
+    result = client.send_email(to=user.email, transactional_message_id="3")
+    if not result.ok:
+        failures.append((user.email, result.status_code, result.error))
+```
+
+`SendResult.raise_for_status()` converts a result to an exception on demand
+(mirroring `requests.Response.raise_for_status`), which is handy when you want
+swallow semantics in one place and raise semantics in another:
+
+```python
+client.send_html(to=..., subject=..., html=...).raise_for_status()
+```
+
+> **Note:** the library does not log send failures above `DEBUG` when
+> `raise_on_error=True` — it has no recipient or template context worth
+> logging from that frame, and a log there would make the failure look
+> handled. Reporting is the caller's job.
 
 ## Configuration
 
@@ -80,6 +122,7 @@ client = CustomerIOClient(
     default_from="noreply@lived.com",     # default sender
     max_retries=3,                        # retry transient failures
     retry_delay=1.0,                      # base delay (seconds)
+    raise_on_error=True,                  # raise CustomerIOSendError on failure (default)
 )
 ```
 
@@ -89,8 +132,8 @@ client = CustomerIOClient(
 
 | Method | Description |
 |---|---|
-| `CustomerIOClient(app_api_key, region?, default_from?)` | Create a client with an explicit API key |
-| `CustomerIOClient.from_env(env_var?, region?, default_from?)` | Create a client from an environment variable |
+| `CustomerIOClient(app_api_key, region?, default_from?, raise_on_error?)` | Create a client with an explicit API key |
+| `CustomerIOClient.from_env(env_var?, region?, default_from?, raise_on_error?)` | Create a client from an environment variable |
 | `send_email(to, transactional_message_id, message_data?, ...)` | Send a template-based transactional email |
 | `send_text(to, subject, body, from_email?, reply_to?, ...)` | Send a plain-text email (inline content) |
 | `send_html(to, subject, html, from_email?, reply_to?, ...)` | Send an HTML email (inline content) |
@@ -104,6 +147,19 @@ client = CustomerIOClient(
 | `status_code` | `int` | HTTP status code (0 on exception) |
 | `body` | `dict[str, Any]` | Response body |
 | `error` | `str \| None` | Error message on failure |
+| `exception` | `Exception \| None` | Originating SDK exception on failure |
+
+| Method | Description |
+|---|---|
+| `raise_for_status(context?)` | Raise `CustomerIOSendError` if `ok` is `False`; no-op otherwise |
+
+### Exceptions
+
+| Exception | Raised when |
+|---|---|
+| `CustomerIOError` | Base class for all library errors |
+| `CustomerIOImportError` | The `customerio` SDK is not installed |
+| `CustomerIOSendError` | A send failed (carries `status_code` and `result`) |
 
 ## Architecture
 
@@ -111,7 +167,7 @@ client = CustomerIOClient(
 altissimo.customerio
 ├── __init__.py       # Public API surface
 ├── client.py         # CustomerIOClient with lazy SDK initialization
-├── exceptions.py     # CustomerIOError, CustomerIOImportError
+├── exceptions.py     # CustomerIOError, CustomerIOImportError, CustomerIOSendError
 ├── models.py         # EmailAddress, SendResult dataclasses
 └── py.typed          # PEP 561 marker
 ```

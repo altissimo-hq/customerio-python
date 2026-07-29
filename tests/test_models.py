@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import re
+
+import pytest
+
+from altissimo.customerio.exceptions import CustomerIOSendError
 from altissimo.customerio.models import EmailAddress, SendResult
 
 
@@ -57,10 +62,9 @@ class TestSendResult:
         assert result.status_code == 0
         assert result.body == {}
         assert result.error is None
+        assert result.exception is None
 
     def test_frozen(self) -> None:
-        import pytest
-
         result = SendResult(ok=True)
         with pytest.raises(AttributeError):
             result.ok = False  # type: ignore[misc]
@@ -69,3 +73,30 @@ class TestSendResult:
         a = SendResult(ok=True, delivery_id="abc")
         b = SendResult(ok=True, delivery_id="abc")
         assert a == b
+
+
+class TestRaiseForStatus:
+    """Tests for SendResult.raise_for_status."""
+
+    def test_noop_on_success(self) -> None:
+        assert SendResult(ok=True, delivery_id="abc").raise_for_status() is None
+
+    def test_raises_on_failure(self) -> None:
+        result = SendResult(ok=False, status_code=400, error="Bad request")
+        with pytest.raises(CustomerIOSendError) as exc_info:
+            result.raise_for_status()
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.result is result
+        assert "Bad request" in str(exc_info.value)
+
+    def test_includes_context(self) -> None:
+        result = SendResult(ok=False, status_code=400, error="Bad request")
+        with pytest.raises(CustomerIOSendError, match=re.escape("to=user@example.com")):
+            result.raise_for_status("to=user@example.com")
+
+    def test_chains_original_exception(self) -> None:
+        original = ValueError("network down")
+        result = SendResult(ok=False, error="network down", exception=original)
+        with pytest.raises(CustomerIOSendError) as exc_info:
+            result.raise_for_status()
+        assert exc_info.value.__cause__ is original

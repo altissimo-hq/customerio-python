@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from altissimo.customerio.client import CustomerIOClient
+from altissimo.customerio.exceptions import CustomerIOSendError
 from altissimo.customerio.models import EmailAddress
 
 # ------------------------------------------------------------------
@@ -228,9 +229,25 @@ class TestSendEmail:
         )
         assert result.ok is True
 
-    def test_send_email_api_error(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+    def test_send_email_api_error_raises_by_default(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
         fake_api_client.send_email.side_effect = Exception("API error")
-        result = client_with_mock.send_email(
+        with pytest.raises(CustomerIOSendError) as exc_info:
+            client_with_mock.send_email(
+                to="recipient@example.com",
+                transactional_message_id="tmpl-1",
+            )
+        # The exception message carries the context the library used to swallow.
+        assert "recipient@example.com" in str(exc_info.value)
+        assert "tmpl-1" in str(exc_info.value)
+        assert "API error" in str(exc_info.value)
+        assert exc_info.value.result is not None
+        assert exc_info.value.result.ok is False
+
+    def test_send_email_api_error_swallowed_when_opted_out(
+        self, client_no_raise: Any, fake_api_client: MagicMock
+    ) -> None:
+        fake_api_client.send_email.side_effect = Exception("API error")
+        result = client_no_raise.send_email(
             to="recipient@example.com",
             transactional_message_id="tmpl-1",
         )
@@ -268,9 +285,20 @@ class TestSendText:
         )
         assert result.ok is True
 
-    def test_send_text_api_error(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+    def test_send_text_api_error_raises_by_default(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
         fake_api_client.send_email.side_effect = Exception("API error")
-        result = client_with_mock.send_text(
+        with pytest.raises(CustomerIOSendError):
+            client_with_mock.send_text(
+                to="recipient@example.com",
+                subject="Hello",
+                body="Text content",
+            )
+
+    def test_send_text_api_error_swallowed_when_opted_out(
+        self, client_no_raise: Any, fake_api_client: MagicMock
+    ) -> None:
+        fake_api_client.send_email.side_effect = Exception("API error")
+        result = client_no_raise.send_text(
             to="recipient@example.com",
             subject="Hello",
             body="Text content",
@@ -303,9 +331,20 @@ class TestSendHtml:
         )
         assert result.ok is True
 
-    def test_send_html_api_error(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+    def test_send_html_api_error_raises_by_default(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
         fake_api_client.send_email.side_effect = Exception("API error")
-        result = client_with_mock.send_html(
+        with pytest.raises(CustomerIOSendError):
+            client_with_mock.send_html(
+                to="recipient@example.com",
+                subject="Hello",
+                html="<h1>Welcome!</h1>",
+            )
+
+    def test_send_html_api_error_swallowed_when_opted_out(
+        self, client_no_raise: Any, fake_api_client: MagicMock
+    ) -> None:
+        fake_api_client.send_email.side_effect = Exception("API error")
+        result = client_no_raise.send_html(
             to="recipient@example.com",
             subject="Hello",
             html="<h1>Welcome!</h1>",
@@ -351,6 +390,20 @@ class TestBuildResult:
         exc.status_code = 429  # type: ignore[attr-defined]
         result = CustomerIOClient._build_error_result(exc)
         assert result.status_code == 429
+
+    def test_error_result_preserves_exception(self) -> None:
+        exc = Exception("fail")
+        result = CustomerIOClient._build_error_result(exc)
+        assert result.exception is exc
+
+    def test_error_result_does_not_log_above_debug(self) -> None:
+        """The library must not report failures on the caller's behalf."""
+        with patch("altissimo.customerio.client.logger") as mock_logger:
+            CustomerIOClient._build_error_result(Exception("fail"))
+        mock_logger.exception.assert_not_called()
+        mock_logger.error.assert_not_called()
+        mock_logger.warning.assert_not_called()
+        mock_logger.debug.assert_called_once()
 
 
 # ------------------------------------------------------------------
@@ -482,7 +535,12 @@ class TestRetryBehavior:
     def test_retry_exhausted(self, fake_api_client: MagicMock) -> None:
         from altissimo.customerio import CustomerIOClient
 
-        client = CustomerIOClient(app_api_key="key", default_from="sender@example.com", max_retries=1)
+        client = CustomerIOClient(
+            app_api_key="key",
+            default_from="sender@example.com",
+            max_retries=1,
+            raise_on_error=False,
+        )
         client._client = fake_api_client
 
         exc = Exception("server error")
@@ -497,10 +555,34 @@ class TestRetryBehavior:
         assert result.ok is False
         assert fake_api_client.send_email.call_count == 2
 
+    def test_retry_exhausted_raises_by_default(self, fake_api_client: MagicMock) -> None:
+        from altissimo.customerio import CustomerIOClient
+
+        client = CustomerIOClient(app_api_key="key", default_from="sender@example.com", max_retries=1)
+        client._client = fake_api_client
+
+        exc = Exception("server error")
+        exc.status_code = 500  # type: ignore[attr-defined]
+        fake_api_client.send_email.side_effect = exc
+
+        with patch.object(client, "_backoff"), pytest.raises(CustomerIOSendError) as exc_info:
+            client.send_email(
+                to="recipient@example.com",
+                transactional_message_id="tmpl-1",
+            )
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.__cause__ is exc
+        assert fake_api_client.send_email.call_count == 2
+
     def test_no_retry_on_non_transient(self, fake_api_client: MagicMock) -> None:
         from altissimo.customerio import CustomerIOClient
 
-        client = CustomerIOClient(app_api_key="key", default_from="sender@example.com", max_retries=3)
+        client = CustomerIOClient(
+            app_api_key="key",
+            default_from="sender@example.com",
+            max_retries=3,
+            raise_on_error=False,
+        )
         client._client = fake_api_client
 
         exc = Exception("bad request")
@@ -639,12 +721,31 @@ class TestSuccessLogging:
             )
             mock_logger.info.assert_called_once()
 
-    def test_no_log_on_failure(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+    def test_no_success_log_on_failure(self, client_no_raise: Any, fake_api_client: MagicMock) -> None:
         fake_api_client.send_email.side_effect = Exception("fail")
         with patch("altissimo.customerio.client.logger") as mock_logger:
-            client_with_mock.send_text(
+            client_no_raise.send_text(
                 to="recipient@example.com",
                 subject="Hello",
                 body="body",
             )
             mock_logger.info.assert_not_called()
+
+    def test_warns_with_context_on_swallowed_failure(self, client_no_raise: Any, fake_api_client: MagicMock) -> None:
+        """In swallow mode the library logs the failure — with context, unlike before."""
+        exc = Exception("bad sender")
+        exc.status_code = 400  # type: ignore[attr-defined]
+        fake_api_client.send_email.side_effect = exc
+
+        with patch("altissimo.customerio.client.logger") as mock_logger:
+            client_no_raise.send_html(
+                to="recipient@example.com",
+                subject="Reset your password",
+                html="<p>Hi</p>",
+            )
+            mock_logger.warning.assert_called_once()
+            rendered = mock_logger.warning.call_args[0][0] % mock_logger.warning.call_args[0][1:]
+
+        assert "recipient@example.com" in rendered
+        assert "Reset your password" in rendered
+        assert "400" in rendered
