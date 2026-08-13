@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-13
+
+### Added
+
+- `headers` parameter on `send_email()`, `send_text()` and `send_html()`, forwarded to the
+  SDK's `SendEmailRequest`. The Customer.io API and the underlying `customerio` SDK have
+  always supported custom headers; this wrapper silently dropped them, which made the
+  RFC 8058 one-click unsubscribe pair (`List-Unsubscribe` plus
+  `List-Unsubscribe-Post: List-Unsubscribe=One-Click`) impossible to send. Gmail and Yahoo
+  require both headers to render their one-click unsubscribe button, so notification-class
+  mail could not meet their bulk-sender rules.
+- `send_to_unsubscribed` parameter on the same three methods, also previously dropped. Lets
+  a caller override the setting per send rather than only per transactional message in the
+  Customer.io dashboard — which matters when the opt-out of record lives in the caller's own
+  database, so a marketing unsubscribe must not suppress notification mail. Typed
+  `bool | None`: `None` leaves the field off the request so the transactional message's own
+  configuration applies, and `False` is forwarded rather than quietly treated as unset.
+
 ## [0.2.0] - 2026-07-29
 
 ### Changed

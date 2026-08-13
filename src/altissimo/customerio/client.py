@@ -366,6 +366,8 @@ class CustomerIOClient:
         reply_to: str | None = None,
         bcc: list[str] | None = None,
         preheader: str | None = None,
+        headers: dict[str, str] | None = None,
+        send_to_unsubscribed: bool | None = None,
     ) -> Any:
         """Build a ``SendEmailRequest`` from the given parameters.
 
@@ -410,6 +412,15 @@ class CustomerIOClient:
         if preheader is not None:
             kwargs["preheader"] = preheader
 
+        if headers is not None:
+            kwargs["headers"] = headers
+
+        # Explicitly ``is not None`` rather than truthy: ``False`` is a meaningful
+        # value the caller may want to send, distinct from "leave it unset and let
+        # the transactional message's own configuration decide".
+        if send_to_unsubscribed is not None:
+            kwargs["send_to_unsubscribed"] = send_to_unsubscribed
+
         return SendEmailRequest(**kwargs)
 
     # ------------------------------------------------------------------
@@ -427,6 +438,8 @@ class CustomerIOClient:
         reply_to: EmailAddressLike | None = None,
         bcc: EmailRecipients | None = None,
         preheader: str | None = None,
+        headers: dict[str, str] | None = None,
+        send_to_unsubscribed: bool | None = None,
     ) -> SendResult:
         """Send a transactional email using a Customer.io template.
 
@@ -447,6 +460,25 @@ class CustomerIOClient:
             reply_to: Reply-to email address.
             bcc: BCC recipient(s) — a single address or list of addresses.
             preheader: Email preheader text (inbox preview).
+            headers: Custom email headers. The motivating case is the RFC 8058
+                one-click unsubscribe pair::
+
+                    headers={
+                        "List-Unsubscribe": "<https://api.example.com/email/unsubscribe?t=TOKEN>",
+                        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+                    }
+
+                **Both** are required for Gmail and Yahoo to render a one-click
+                unsubscribe button; ``List-Unsubscribe`` on its own only yields a
+                plain link, which some clients issue a ``GET`` against. The URL
+                must therefore answer an unauthenticated ``POST`` with a ``2xx``
+                and no redirect — RFC 8058 forbids redirecting the POST, since
+                browsers have historically turned redirected POSTs into GETs.
+            send_to_unsubscribed: Send even to profiles Customer.io has flagged
+                ``unsubscribed``. Set this for notification-class mail whose
+                opt-out is tracked in your own system rather than by Customer.io,
+                so a marketing unsubscribe does not silently suppress it. Leave
+                unset to inherit the transactional message's own setting.
 
         Returns:
             A ``SendResult`` with the API response details.
@@ -469,6 +501,8 @@ class CustomerIOClient:
                 reply_to=reply_to_str,
                 bcc=bcc_list,
                 preheader=preheader,
+                headers=headers,
+                send_to_unsubscribed=send_to_unsubscribed,
             )
 
             context = f"to={to_str} template={transactional_message_id}"
@@ -504,6 +538,8 @@ class CustomerIOClient:
         bcc: EmailRecipients | None = None,
         identifiers: dict[str, str] | None = None,
         preheader: str | None = None,
+        headers: dict[str, str] | None = None,
+        send_to_unsubscribed: bool | None = None,
     ) -> SendResult:
         """Send a plain-text transactional email with inline content.
 
@@ -520,6 +556,9 @@ class CustomerIOClient:
             bcc: BCC recipient(s) — a single address or list of addresses.
             identifiers: Customer.io profile identifiers.
             preheader: Email preheader text (inbox preview).
+            headers: Custom email headers — see :meth:`send_email`.
+            send_to_unsubscribed: Send even to unsubscribed profiles — see
+                :meth:`send_email`.
 
         Returns:
             A ``SendResult`` with the API response details.
@@ -535,6 +574,8 @@ class CustomerIOClient:
             bcc=bcc,
             identifiers=identifiers,
             preheader=preheader,
+            headers=headers,
+            send_to_unsubscribed=send_to_unsubscribed,
         )
 
     def send_html(
@@ -548,6 +589,8 @@ class CustomerIOClient:
         bcc: EmailRecipients | None = None,
         identifiers: dict[str, str] | None = None,
         preheader: str | None = None,
+        headers: dict[str, str] | None = None,
+        send_to_unsubscribed: bool | None = None,
     ) -> SendResult:
         """Send an HTML transactional email with inline content.
 
@@ -563,6 +606,9 @@ class CustomerIOClient:
             bcc: BCC recipient(s) — a single address or list of addresses.
             identifiers: Customer.io profile identifiers.
             preheader: Email preheader text (inbox preview).
+            headers: Custom email headers — see :meth:`send_email`.
+            send_to_unsubscribed: Send even to unsubscribed profiles — see
+                :meth:`send_email`.
 
         Returns:
             A ``SendResult`` with the API response details.
@@ -576,6 +622,8 @@ class CustomerIOClient:
             bcc=bcc,
             identifiers=identifiers,
             preheader=preheader,
+            headers=headers,
+            send_to_unsubscribed=send_to_unsubscribed,
         )
 
     def _send_inline(
@@ -589,6 +637,8 @@ class CustomerIOClient:
         bcc: EmailRecipients | None = None,
         identifiers: dict[str, str] | None = None,
         preheader: str | None = None,
+        headers: dict[str, str] | None = None,
+        send_to_unsubscribed: bool | None = None,
     ) -> SendResult:
         """Internal method to send inline-content transactional emails."""
         sender = self._resolve_from(from_email)
@@ -608,6 +658,8 @@ class CustomerIOClient:
                 reply_to=reply_to_str,
                 bcc=bcc_list,
                 preheader=preheader,
+                headers=headers,
+                send_to_unsubscribed=send_to_unsubscribed,
             )
 
             context = f"to={to_str} subject={subject!r}"
