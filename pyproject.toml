@@ -1,6 +1,6 @@
 [project]
 name = "altissimo-customerio"
-version = "0.2.0"
+version = "0.3.0"
 description = "Customer.io transactional email and messaging client for Altissimo projects"
 readme = "README.md"
 license = "Apache-2.0"

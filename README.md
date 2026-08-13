@@ -18,6 +18,7 @@ Customer.io transactional email and messaging client for Altissimo Python projec
 - 📐 **Typed** — full type annotations with `py.typed` PEP 561 marker
 - ✅ **Consistent return type** — all methods return a `SendResult` dataclass
 - 🔄 **Retry with backoff** — configurable retry for transient failures
+- ✉️ **Custom headers** — including the RFC 8058 one-click unsubscribe pair
 - 🔔 **Fails loudly** — send failures raise `CustomerIOSendError` by default; opt out per client for batch sends
 
 ## Requirements
@@ -103,6 +104,37 @@ client.send_html(to=..., subject=..., html=...).raise_for_status()
 > `raise_on_error=True` — it has no recipient or template context worth
 > logging from that frame, and a log there would make the failure look
 > handled. Reporting is the caller's job.
+
+## One-Click Unsubscribe (RFC 8058)
+
+Gmail and Yahoo's bulk-sender rules expect notification and marketing mail to carry a
+one-click unsubscribe. That needs **both** headers — `List-Unsubscribe` alone only produces
+a plain link:
+
+```python
+client.send_email(
+    to=user.email,
+    transactional_message_id="12",
+    message_data={"first_name": user.first_name},
+    headers={
+        "List-Unsubscribe": f"<https://api.example.com/email/unsubscribe?t={token}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
+    # The opt-out of record is our own database, so Customer.io's global
+    # `unsubscribed` flag (which tracks marketing) must not suppress this.
+    send_to_unsubscribed=True,
+)
+```
+
+Your endpoint must answer an **unauthenticated `POST`** with a `2xx` and no redirect — RFC 8058
+forbids redirecting the POST, because browsers have historically turned redirected POSTs into
+GETs. Providers will retry, so make it idempotent. Expect `GET`s on the same URL too: some
+clients (Apple Mail, Thunderbird) render the header as a link rather than POSTing it, and mail
+gateways and link scanners fetch URLs found in mail — so a `GET` should never mutate anything.
+
+> **Note:** `send_to_unsubscribed` is `bool | None`. Leave it unset to inherit whatever the
+> transactional message is configured with in the Customer.io dashboard; pass `False` to
+> explicitly opt out. `False` is forwarded, not treated as unset.
 
 ## Configuration
 

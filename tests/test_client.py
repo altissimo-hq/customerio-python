@@ -498,6 +498,125 @@ class TestBcc:
 
 
 # ------------------------------------------------------------------
+# Custom headers
+# ------------------------------------------------------------------
+
+ONE_CLICK_HEADERS = {
+    "List-Unsubscribe": "<https://api.example.com/email/unsubscribe?t=tok>",
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+}
+
+
+class TestHeaders:
+    """Tests for custom email headers (RFC 8058 one-click unsubscribe et al)."""
+
+    def test_headers_on_template_send(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        result = client_with_mock.send_email(
+            to="recipient@example.com",
+            transactional_message_id="3",
+            headers=ONE_CLICK_HEADERS,
+        )
+        assert result.ok is True
+        request = fake_api_client.send_email.call_args[0][0]
+        assert request.headers == ONE_CLICK_HEADERS
+
+    def test_headers_on_inline_send(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        result = client_with_mock.send_html(
+            to="recipient@example.com",
+            subject="Hello",
+            html="<p>Hi</p>",
+            headers=ONE_CLICK_HEADERS,
+        )
+        assert result.ok is True
+        request = fake_api_client.send_email.call_args[0][0]
+        assert request.headers == ONE_CLICK_HEADERS
+
+    def test_headers_omitted_when_not_given(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        """Unset headers must not reach the SDK, so Customer.io applies its own defaults."""
+        client_with_mock.send_email(to="recipient@example.com", transactional_message_id="3")
+        request = fake_api_client.send_email.call_args[0][0]
+        assert request.headers is None
+
+    def test_headers_applied_to_every_recipient(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        """A multi-recipient send builds one request each; none may lose the headers."""
+        client_with_mock.send_email(
+            to=["one@example.com", "two@example.com"],
+            transactional_message_id="3",
+            headers=ONE_CLICK_HEADERS,
+        )
+        assert fake_api_client.send_email.call_count == 2
+        for call in fake_api_client.send_email.call_args_list:
+            assert call[0][0].headers == ONE_CLICK_HEADERS
+
+    def test_headers_reach_the_wire_payload(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        """Guard the SDK contract: accepting the kwarg is worthless if it isn't serialized.
+
+        ``SendEmailRequest._to_dict()`` builds the POST body from an explicit field map and
+        drops ``None`` values, so this also pins the ``bool | None`` semantics — ``False``
+        is sent, unset is absent.
+        """
+        client_with_mock.send_email(
+            to="recipient@example.com",
+            transactional_message_id="3",
+            headers=ONE_CLICK_HEADERS,
+            send_to_unsubscribed=False,
+        )
+        payload = fake_api_client.send_email.call_args[0][0]._to_dict()
+        assert payload["headers"] == ONE_CLICK_HEADERS
+        assert payload["send_to_unsubscribed"] is False
+
+    def test_unset_fields_absent_from_wire_payload(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        client_with_mock.send_email(to="recipient@example.com", transactional_message_id="3")
+        payload = fake_api_client.send_email.call_args[0][0]._to_dict()
+        assert "headers" not in payload
+        assert "send_to_unsubscribed" not in payload
+
+
+# ------------------------------------------------------------------
+# send_to_unsubscribed
+# ------------------------------------------------------------------
+
+
+class TestSendToUnsubscribed:
+    """Tests for the ``send_to_unsubscribed`` override."""
+
+    def test_true_is_forwarded(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        client_with_mock.send_email(
+            to="recipient@example.com",
+            transactional_message_id="3",
+            send_to_unsubscribed=True,
+        )
+        request = fake_api_client.send_email.call_args[0][0]
+        assert request.send_to_unsubscribed is True
+
+    def test_false_is_forwarded_not_treated_as_unset(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        """``False`` is a real instruction — suppressing it would silently ignore the caller."""
+        client_with_mock.send_email(
+            to="recipient@example.com",
+            transactional_message_id="3",
+            send_to_unsubscribed=False,
+        )
+        request = fake_api_client.send_email.call_args[0][0]
+        assert request.send_to_unsubscribed is False
+
+    def test_omitted_when_not_given(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        """Unset must stay unset, so the transactional message's own setting wins."""
+        client_with_mock.send_email(to="recipient@example.com", transactional_message_id="3")
+        request = fake_api_client.send_email.call_args[0][0]
+        assert request.send_to_unsubscribed is None
+
+    def test_forwarded_on_inline_send(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        client_with_mock.send_text(
+            to="recipient@example.com",
+            subject="Hello",
+            body="Text",
+            send_to_unsubscribed=True,
+        )
+        request = fake_api_client.send_email.call_args[0][0]
+        assert request.send_to_unsubscribed is True
+
+
+# ------------------------------------------------------------------
 # Retry behavior
 # ------------------------------------------------------------------
 
