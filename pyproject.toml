@@ -46,7 +46,7 @@ mypy = ">=1.13"
 pytest = ">=8.0"
 pytest-cov = ">=6.0"
 ruff = ">=0.11"
-pre-commit = ">=4.0"
+pre-commit = ">=4.6.2"
 
 # Include customerio in dev for testing
 customerio = ">=2.0,<3.0"
