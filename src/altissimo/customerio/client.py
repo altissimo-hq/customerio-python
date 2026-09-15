@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,16 @@ EmailRecipients = EmailAddressLike | list[EmailAddressLike]
 
 #: HTTP status codes that are considered transient and eligible for retry.
 _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+#: The ``customerio`` SDK's ``send_request`` collapses every failure — network
+#: errors and real HTTP errors alike — into a single ``CustomerIOException``
+#: that never sets a ``.status_code`` attribute. The status only survives as
+#: text inside the exception's message, in the shape:
+#:   "...Last caught exception -- <class '...CustomerIOException'>: 400: <url> ..."
+#: This is not a documented contract of that library — a future release could
+#: change the wording and silently break this extraction. A failed match is
+#: the safe fallback: status_code stays 0, same as before this existed.
+_CUSTOMERIO_STATUS_RE = re.compile(r"CustomerIOException'>: (\d{3}):")
 
 __all__ = ["CustomerIOClient"]
 
@@ -58,6 +69,25 @@ def _get_api_client(app_api_key: str, region: Any) -> APIClient:
     return _APIClient(app_api_key, region=region)
 
 
+def _extract_customerio_status_code(exc: Exception) -> int:
+    """Best-effort extraction of the real HTTP status from a ``customerio`` SDK exception.
+
+    See :data:`_CUSTOMERIO_STATUS_RE` for why this is necessary and why it's
+    fragile. Returns ``0`` (i.e. "unknown, treat as transient") if *exc* isn't
+    a ``CustomerIOException`` or the message doesn't match the expected shape.
+    """
+    try:
+        from customerio.client_base import CustomerIOException
+    except ImportError:
+        return 0
+
+    if not isinstance(exc, CustomerIOException):
+        return 0
+
+    match = _CUSTOMERIO_STATUS_RE.search(str(exc))
+    return int(match.group(1)) if match else 0
+
+
 def _resolve_region(region: str) -> Any:
     """Resolve a region string (``"us"`` or ``"eu"``) to a ``Regions`` enum value.
 
@@ -87,7 +117,8 @@ class CustomerIOClient:
     email operations: plain-text, HTML, and template-based emails.
 
     The underlying ``APIClient`` is lazily initialized on the first send
-    call, so constructing a ``CustomerIOClient`` is side-effect-free.
+    call, so constructing a ``CustomerIOClient`` — via either the
+    constructor or :meth:`from_env` — is side-effect-free.
 
     Args:
         app_api_key: Customer.io App API key (for transactional messaging).
@@ -116,7 +147,18 @@ class CustomerIOClient:
         retry_delay: float = 1.0,
         raise_on_error: bool = True,
     ) -> None:
-        self._app_api_key = app_api_key
+        self._init_common(region, default_from, max_retries, retry_delay, raise_on_error)
+        self._app_api_key: str | None = app_api_key
+        self._app_api_key_env_var: str | None = None
+
+    def _init_common(
+        self,
+        region: str,
+        default_from: EmailAddressLike | None,
+        max_retries: int,
+        retry_delay: float,
+        raise_on_error: bool,
+    ) -> None:
         self._region_str = region
         self._default_from = default_from
         self._max_retries = max_retries
@@ -135,7 +177,11 @@ class CustomerIOClient:
         retry_delay: float = 1.0,
         raise_on_error: bool = True,
     ) -> CustomerIOClient:
-        """Create a client using an API key from an environment variable.
+        """Create a client that reads its API key from an environment variable.
+
+        The environment variable is not read until the API key is actually
+        needed (the first send call, or access to :attr:`client`) — this
+        factory is just as side-effect-free as the regular constructor.
 
         Args:
             env_var: Name of the environment variable containing the App API key.
@@ -148,29 +194,40 @@ class CustomerIOClient:
             raise_on_error: Raise :class:`CustomerIOSendError` on send failure.
 
         Raises:
-            ValueError: If the environment variable is not set.
+            ValueError: If the environment variable is not set or is empty,
+                raised lazily on first use rather than from this call.
         """
-        app_api_key = os.environ.get(env_var)
+        if region is None:
+            region = os.environ.get("CUSTOMERIO_REGION", "us")
+        instance = cls.__new__(cls)
+        instance._init_common(region, default_from, max_retries, retry_delay, raise_on_error)
+        instance._app_api_key = None
+        instance._app_api_key_env_var = env_var
+        return instance
+
+    def _resolve_api_key(self) -> str:
+        """Return the App API key, reading it from the environment on first use.
+
+        Raises:
+            ValueError: If the client was built via :meth:`from_env` and the
+                configured environment variable is not set or is empty.
+        """
+        if self._app_api_key is not None:
+            return self._app_api_key
+        env_var = self._app_api_key_env_var
+        app_api_key = os.environ.get(env_var) if env_var else None
         if not app_api_key:
             msg = f"Environment variable '{env_var}' is not set or is empty."
             raise ValueError(msg)
-        if region is None:
-            region = os.environ.get("CUSTOMERIO_REGION", "us")
-        return cls(
-            app_api_key=app_api_key,
-            region=region,
-            default_from=default_from,
-            max_retries=max_retries,
-            retry_delay=retry_delay,
-            raise_on_error=raise_on_error,
-        )
+        self._app_api_key = app_api_key
+        return app_api_key
 
     @property
     def client(self) -> APIClient:
         """Return the lazily-initialized ``APIClient``."""
         if self._client is None:
             resolved_region = _resolve_region(self._region_str)
-            self._client = _get_api_client(self._app_api_key, resolved_region)
+            self._client = _get_api_client(self._resolve_api_key(), resolved_region)
         return self._client
 
     # ------------------------------------------------------------------
@@ -278,9 +335,9 @@ class CustomerIOClient:
         """
         status_code = 0
         if hasattr(exc, "status_code"):
-            status_code = getattr(exc, "status_code", 0)
-        elif hasattr(exc, "code"):
-            status_code = getattr(exc, "code", 0)
+            status_code = int(getattr(exc, "status_code", 0) or 0)
+        else:
+            status_code = _extract_customerio_status_code(exc)
 
         logger.debug("Customer.io API error (status=%s)", status_code, exc_info=exc)
 
@@ -298,8 +355,24 @@ class CustomerIOClient:
     def _send_with_retry(self, send_fn: Any, *, context: str = "") -> SendResult:
         """Execute a send function, retrying on transient failures with exponential backoff.
 
+        ``send_fn`` must be built from an already-resolved :attr:`client`
+        (call sites do this before entering the loop), not from ``self.client``
+        directly — resolving it lazily inside ``send_fn`` would let a missing
+        API key or an uninstalled SDK get caught below, given ``status_code=0``,
+        and retried through the full backoff schedule instead of propagating
+        immediately as the config error it actually is.
+
+        The ``customerio`` SDK collapses every send failure — network errors
+        and real HTTP errors alike — into one ``CustomerIOException`` with no
+        ``.status_code`` attribute; :func:`_extract_customerio_status_code`
+        recovers it on a best-effort basis by parsing the exception's message.
+        When that extraction fails (unrecognized message shape, or a non-HTTP
+        exception), ``status_code`` stays ``0`` and is treated as transient —
+        the same conservative default this had before the extraction existed.
+
         Args:
-            send_fn: A zero-argument callable that performs the API send.
+            send_fn: A zero-argument callable that performs the API send,
+                closing over an already-resolved client.
             context: Description of the send, used in retry logs and in the
                 raised exception message.
 
@@ -483,6 +556,8 @@ class CustomerIOClient:
         Returns:
             A ``SendResult`` with the API response details.
         """
+        client = self.client  # Resolve eagerly — config/import errors must not be retried.
+
         sender = self._resolve_from(from_email) if from_email or self._default_from else None
         recipients = self._normalize_recipients(to)
         bcc_list = [self._resolve_email_str(a) for a in self._normalize_recipients(bcc)] if bcc else None
@@ -506,7 +581,7 @@ class CustomerIOClient:
             )
 
             context = f"to={to_str} template={transactional_message_id}"
-            result = self._send_with_retry(lambda r=request: self.client.send_email(r), context=context)
+            result = self._send_with_retry(lambda r=request: client.send_email(r), context=context)
             last_result = result
             if result.ok:
                 logger.info(
@@ -644,6 +719,8 @@ class CustomerIOClient:
         send_to_unsubscribed: bool | None = None,
     ) -> SendResult:
         """Internal method to send inline-content transactional emails."""
+        client = self.client  # Resolve eagerly — config/import errors must not be retried.
+
         sender = self._resolve_from(from_email)
         recipients = self._normalize_recipients(to)
         bcc_list = [self._resolve_email_str(a) for a in self._normalize_recipients(bcc)] if bcc else None
@@ -666,7 +743,7 @@ class CustomerIOClient:
             )
 
             context = f"to={to_str} subject={subject!r}"
-            result = self._send_with_retry(lambda r=request: self.client.send_email(r), context=context)
+            result = self._send_with_retry(lambda r=request: client.send_email(r), context=context)
             last_result = result
             if result.ok:
                 logger.info(

@@ -11,7 +11,7 @@ from .models import EmailAddress, SendResult
 try:
     __version__ = version("altissimo-customerio")
 except PackageNotFoundError:
-    __version__ = "0.2.0"
+    __version__ = "0.3.1"
 
 __all__ = [
     "CustomerIOClient",

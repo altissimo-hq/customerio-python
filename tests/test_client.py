@@ -41,16 +41,23 @@ class TestClientConstruction:
         assert client._max_retries == 3
         assert client._retry_delay == 2.0
 
+    def test_from_env_does_not_read_env_var_eagerly(self) -> None:
+        """Constructing via from_env() must not touch the environment at all."""
+        with patch.dict(os.environ, {}, clear=True):
+            client = CustomerIOClient.from_env(env_var="CUSTOMERIO_API_KEY")
+        assert client._app_api_key is None
+        assert client._app_api_key_env_var == "CUSTOMERIO_API_KEY"
+
     def test_from_env(self) -> None:
         with patch.dict(os.environ, {"CUSTOMERIO_API_KEY": "env-key"}):
             client = CustomerIOClient.from_env()
-            assert client._app_api_key == "env-key"
+            assert client._resolve_api_key() == "env-key"
             assert client._region_str == "us"
 
     def test_from_env_custom_var(self) -> None:
         with patch.dict(os.environ, {"MY_CIO_KEY": "custom-key"}):
             client = CustomerIOClient.from_env(env_var="MY_CIO_KEY")
-            assert client._app_api_key == "custom-key"
+            assert client._resolve_api_key() == "custom-key"
 
     def test_from_env_with_region(self) -> None:
         with patch.dict(os.environ, {"CUSTOMERIO_API_KEY": "key", "CUSTOMERIO_REGION": "eu"}):
@@ -62,13 +69,31 @@ class TestClientConstruction:
             client = CustomerIOClient.from_env(region="us")
             assert client._region_str == "us"
 
-    def test_from_env_missing_key(self) -> None:
-        with patch.dict(os.environ, {}, clear=True), pytest.raises(ValueError, match="not set or is empty"):
-            CustomerIOClient.from_env(env_var="MISSING_KEY")
+    def test_from_env_missing_key_does_not_raise_at_construction(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            client = CustomerIOClient.from_env(env_var="MISSING_KEY")
+        assert client is not None
 
-    def test_from_env_empty_key(self) -> None:
-        with patch.dict(os.environ, {"CUSTOMERIO_API_KEY": ""}), pytest.raises(ValueError, match="not set or is empty"):
-            CustomerIOClient.from_env()
+    def test_from_env_missing_key_raises_lazily_on_first_use(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            client = CustomerIOClient.from_env(env_var="MISSING_KEY")
+            with pytest.raises(ValueError, match="not set or is empty"):
+                client._resolve_api_key()
+            with pytest.raises(ValueError, match="not set or is empty"):
+                _ = client.client
+
+    def test_from_env_empty_key_raises_lazily_on_first_use(self) -> None:
+        with patch.dict(os.environ, {"CUSTOMERIO_API_KEY": ""}):
+            client = CustomerIOClient.from_env()
+            with pytest.raises(ValueError, match="not set or is empty"):
+                client._resolve_api_key()
+
+    def test_from_env_reads_env_var_set_after_construction(self) -> None:
+        """The env var is read at first-use time, not construction time."""
+        with patch.dict(os.environ, {}, clear=True):
+            client = CustomerIOClient.from_env()
+            os.environ["CUSTOMERIO_API_KEY"] = "set-later"
+            assert client._resolve_api_key() == "set-later"
 
 
 # ------------------------------------------------------------------
@@ -405,6 +430,46 @@ class TestBuildResult:
         mock_logger.warning.assert_not_called()
         mock_logger.debug.assert_called_once()
 
+    def test_error_result_extracts_status_from_customerio_exception(self) -> None:
+        """The customerio SDK never sets .status_code — it's parsed from the message."""
+        from customerio.client_base import CustomerIOException
+
+        exc = CustomerIOException(
+            "Failed to receive valid response after 3 retries.\n"
+            "Check system status at http://status.customer.io.\n"
+            "Last caught exception -- <class 'customerio.client_base.CustomerIOException'>: "
+            "400: https://api.customer.io/v1/send/email {'to': 'a@example.com'} Bad Request body\n"
+            "            "
+        )
+        result = CustomerIOClient._build_error_result(exc)
+        assert result.status_code == 400
+
+    def test_error_result_status_stays_zero_for_unparseable_customerio_exception(self) -> None:
+        """A network-layer failure has no status to extract — 0 is the safe fallback."""
+        from customerio.client_base import CustomerIOException
+
+        exc = CustomerIOException(
+            "Failed to receive valid response after 3 retries.\n"
+            "Check system status at http://status.customer.io.\n"
+            "Last caught exception -- <class 'requests.exceptions.ConnectionError'>: network down\n"
+            "            "
+        )
+        result = CustomerIOClient._build_error_result(exc)
+        assert result.status_code == 0
+
+    def test_error_result_ignores_code_attribute_on_non_customerio_exception(self) -> None:
+        """A `.code` attribute on an arbitrary exception must not be trusted as an HTTP status."""
+        exc = Exception("unrelated")
+        exc.code = 429  # type: ignore[attr-defined]
+        result = CustomerIOClient._build_error_result(exc)
+        assert result.status_code == 0
+
+    def test_status_extraction_returns_zero_when_sdk_not_installed(self) -> None:
+        from altissimo.customerio.client import _extract_customerio_status_code
+
+        with patch.dict("sys.modules", {"customerio": None, "customerio.client_base": None}):
+            assert _extract_customerio_status_code(Exception("fail")) == 0
+
 
 # ------------------------------------------------------------------
 # Import error
@@ -714,6 +779,105 @@ class TestRetryBehavior:
         )
         assert result.ok is False
         assert fake_api_client.send_email.call_count == 1
+
+
+# ------------------------------------------------------------------
+# Config and programming errors must not be retried
+# ------------------------------------------------------------------
+
+
+class TestConfigErrorsNotRetried:
+    """Regression tests: config/import errors must surface immediately, unretried.
+
+    Previously ``self.client`` (which does the lazy API-key/region/import
+    resolution) was resolved *inside* the ``send_fn`` lambda passed to
+    ``_send_with_retry``, i.e. inside the retry loop's ``try``. A missing
+    ``from_env()`` key or an uninstalled SDK was caught, given
+    ``status_code=0``, and retried through the full backoff schedule instead
+    of propagating as the ``ValueError`` / ``CustomerIOImportError`` it
+    actually is. ``client`` is now resolved once before the loop.
+    """
+
+    def test_missing_api_key_raises_immediately_without_retry(self, fake_api_client: MagicMock) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            client = CustomerIOClient.from_env(default_from="sender@example.com", max_retries=2, retry_delay=0.1)
+            with patch.object(client, "_backoff") as mock_backoff, pytest.raises(ValueError, match="not set"):
+                client.send_email(to="a@example.com", transactional_message_id="tmpl-1")
+            mock_backoff.assert_not_called()
+            fake_api_client.send_email.assert_not_called()
+
+    def test_missing_customerio_sdk_raises_immediately_without_retry(self) -> None:
+        from altissimo.customerio.exceptions import CustomerIOImportError
+
+        client = CustomerIOClient(app_api_key="key", default_from="sender@example.com", max_retries=2, retry_delay=0.1)
+        with (
+            patch.dict("sys.modules", {"customerio": None}),
+            patch.object(client, "_backoff") as mock_backoff,
+            pytest.raises(CustomerIOImportError),
+        ):
+            client.send_email(to="a@example.com", transactional_message_id="tmpl-1")
+        mock_backoff.assert_not_called()
+
+
+class TestStatusExtractionDrivesRetryClassification:
+    """End-to-end: a real CustomerIOException's parsed status now controls retries."""
+
+    @staticmethod
+    def _customerio_exception(status_code: int) -> Exception:
+        from customerio.client_base import CustomerIOException
+
+        return CustomerIOException(
+            "Failed to receive valid response after 3 retries.\n"
+            "Check system status at http://status.customer.io.\n"
+            f"Last caught exception -- <class 'customerio.client_base.CustomerIOException'>: "
+            f"{status_code}: https://api.customer.io/v1/send/email {{}} response body\n"
+            "            "
+        )
+
+    def test_permanent_status_is_not_retried(self, fake_api_client: MagicMock) -> None:
+        client = CustomerIOClient(
+            app_api_key="key",
+            default_from="sender@example.com",
+            max_retries=3,
+            retry_delay=0.1,
+            raise_on_error=False,
+        )
+        client._client = fake_api_client
+        fake_api_client.send_email.side_effect = self._customerio_exception(400)
+
+        with patch.object(client, "_backoff") as mock_backoff:
+            result = client.send_email(to="a@example.com", transactional_message_id="tmpl-1")
+        assert result.ok is False
+        assert result.status_code == 400
+        mock_backoff.assert_not_called()
+        fake_api_client.send_email.assert_called_once()
+
+    def test_transient_status_is_retried(self, fake_api_client: MagicMock) -> None:
+        client = CustomerIOClient(app_api_key="key", default_from="sender@example.com", max_retries=2, retry_delay=0.1)
+        client._client = fake_api_client
+        fake_api_client.send_email.side_effect = [
+            self._customerio_exception(503),
+            {"delivery_id": "retry-ok"},
+        ]
+
+        with patch.object(client, "_backoff"):
+            result = client.send_email(to="a@example.com", transactional_message_id="tmpl-1")
+        assert result.ok is True
+        assert fake_api_client.send_email.call_count == 2
+
+    def test_unparseable_failure_still_retried_as_before(self, fake_api_client: MagicMock) -> None:
+        """A message shape we can't parse falls back to status_code=0 — still retryable."""
+        from customerio.client_base import CustomerIOException
+
+        exc = CustomerIOException("Something unexpected happened, no status here")
+        client = CustomerIOClient(app_api_key="key", default_from="sender@example.com", max_retries=2, retry_delay=0.1)
+        client._client = fake_api_client
+        fake_api_client.send_email.side_effect = [exc, {"delivery_id": "retry-ok"}]
+
+        with patch.object(client, "_backoff"):
+            result = client.send_email(to="a@example.com", transactional_message_id="tmpl-1")
+        assert result.ok is True
+        assert fake_api_client.send_email.call_count == 2
 
 
 # ------------------------------------------------------------------

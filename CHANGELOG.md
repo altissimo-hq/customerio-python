@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-09-15
+
+### Fixed
+
+- Config and import errors were retried and relabelled as send failures. `send_email()`
+  and the internal `_send_inline()` built the retry callable as
+  `lambda r=request: self.client.send_email(r)`, so resolving `self.client` (which does
+  the lazy API-key/region/import resolution) happened *inside* `_send_with_retry`'s `try`
+  block. A missing `from_env()` API key or an uninstalled `customerio` SDK was caught
+  there, given `status_code=0`, retried through the full backoff schedule, and finally
+  raised as a misleading `CustomerIOSendError` instead of the `ValueError` /
+  `CustomerIOImportError` it actually is. `client` is now resolved once before the retry
+  loop, so config/import errors propagate immediately and unretried.
+- `status_code` was always `0` for every real Customer.io send failure, so
+  `_RETRYABLE_STATUS_CODES` classification was dead code — a permanent `400`/`401` burned
+  the full retry/backoff schedule the same as a transient `500`. Root cause: the
+  `customerio` SDK's `send_request` collapses every failure, network and HTTP alike, into
+  one `CustomerIOException` that never sets a `.status_code` attribute — the status only
+  survives as text inside the exception's message. `_build_error_result` now recovers it
+  with a best-effort regex against that message shape (documented as fragile — it is not
+  a stable contract of the `customerio` package); a failed match falls back to `0`, the
+  same conservative "treat as transient" behavior this had before.
+- `send_text()` interpolated the caller-supplied plain-text `body` directly into an HTML
+  `<pre>` tag without escaping it, so text containing `<`, `>`, or `&` could inject markup
+  into the rendered email instead of appearing as literal text. `body` is now passed
+  through `html.escape()`.
+- `_build_error_result`'s `.code` fallback trusted a `.code` attribute on any exception as
+  an HTTP status. Removed: this SDK has no code path that sets it, so it only risked
+  misreading an unrelated exception's `.code`.
+
+### Chore
+
+- Added `.github/dependabot.yml` for automated GitHub Actions and pip dependency updates.
+
 ## [0.3.0] - 2026-08-13
 
 ### Added
@@ -72,6 +106,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pytest setup with unit tests
 - Pre-commit hooks configuration
 - GitHub Actions CI workflow (lint, test matrix 3.11–3.13, build verification)
-
-[0.2.0]: https://github.com/altissimo-hq/customerio-python/releases/tag/v0.2.0
-[0.1.0]: https://github.com/altissimo-hq/customerio-python/releases/tag/v0.1.0
