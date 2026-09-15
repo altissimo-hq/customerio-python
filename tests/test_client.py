@@ -819,6 +819,47 @@ class TestConfigErrorsNotRetried:
         mock_backoff.assert_not_called()
 
 
+class TestTransportLayerDoesNotDoubleRetryPost:
+    """Regression guard for a compounding-retries scenario we investigated and ruled out.
+
+    The ``customerio`` SDK's ``APIClient`` builds a ``requests.Session`` with
+    ``HTTPAdapter(max_retries=Retry(total=retries, backoff_factor=...))``.
+    If that ``Retry`` config ever started retrying POST — its
+    ``allowed_methods`` currently excludes it, which is why the SDK's
+    built-in retry count has no practical effect on ``send_email`` /
+    ``send_text`` / ``send_html``, all of which POST — ``CustomerIOClient``'s
+    own retry layer would start compounding with it: the same failure
+    retried both here and at the transport layer, on two different,
+    hard-to-reason-about backoff schedules. This test locks in that it
+    currently doesn't, independent of anything in ``CustomerIOClient`` itself.
+    """
+
+    def test_transport_failure_on_send_makes_exactly_one_http_attempt(self) -> None:
+        import urllib3.connectionpool as cp
+        from customerio import APIClient, Regions
+        from customerio.client_base import CustomerIOException
+
+        client = APIClient("fake-key", region=Regions.US)
+
+        call_count = 0
+
+        def failing_make_request(self: Any, *args: Any, **kwargs: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            raise ConnectionError("simulated failure")
+
+        with (
+            patch.object(cp.HTTPConnectionPool, "_make_request", failing_make_request),
+            pytest.raises(CustomerIOException),
+        ):
+            client.send_email({"to": "user@example.com", "identifiers": {"email": "user@example.com"}})
+
+        assert call_count == 1, (
+            "customerio SDK's transport layer retried a POST — this would now compound "
+            "with CustomerIOClient's own retry layer; see this test's docstring."
+        )
+
+
 class TestStatusExtractionDrivesRetryClassification:
     """End-to-end: a real CustomerIOException's parsed status now controls retries."""
 
