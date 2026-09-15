@@ -7,7 +7,7 @@ import os
 import random
 import re
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from altissimo.customerio.exceptions import CustomerIOImportError
 from altissimo.customerio.models import EmailAddress, SendResult
@@ -52,7 +52,7 @@ def _get_regions_class() -> type[Regions]:
     except ImportError:
         raise CustomerIOImportError from None
 
-    return _Regions
+    return cast("type[Regions]", _Regions)
 
 
 def _get_api_client(app_api_key: str, region: Any) -> APIClient:
