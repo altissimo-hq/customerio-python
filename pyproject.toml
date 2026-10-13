@@ -45,7 +45,7 @@ packages = [
 mypy = ">=1.13"
 pytest = ">=8.0"
 pytest-cov = ">=6.0"
-ruff = ">=0.11"
+ruff = ">=0.17.0"
 pre-commit = ">=4.0"
 
 # Include customerio in dev for testing
