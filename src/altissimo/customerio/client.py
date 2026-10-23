@@ -441,6 +441,8 @@ class CustomerIOClient:
         preheader: str | None = None,
         headers: dict[str, str] | None = None,
         send_to_unsubscribed: bool | None = None,
+        tracked: bool | None = None,
+        disable_message_retention: bool | None = None,
     ) -> Any:
         """Build a ``SendEmailRequest`` from the given parameters.
 
@@ -494,6 +496,12 @@ class CustomerIOClient:
         if send_to_unsubscribed is not None:
             kwargs["send_to_unsubscribed"] = send_to_unsubscribed
 
+        if tracked is not None:
+            kwargs["tracked"] = tracked
+
+        if disable_message_retention is not None:
+            kwargs["disable_message_retention"] = disable_message_retention
+
         return SendEmailRequest(**kwargs)
 
     # ------------------------------------------------------------------
@@ -513,6 +521,8 @@ class CustomerIOClient:
         preheader: str | None = None,
         headers: dict[str, str] | None = None,
         send_to_unsubscribed: bool | None = None,
+        tracked: bool | None = None,
+        disable_message_retention: bool | None = None,
     ) -> SendResult:
         """Send a transactional email using a Customer.io template.
 
@@ -552,6 +562,14 @@ class CustomerIOClient:
                 opt-out is tracked in your own system rather than by Customer.io,
                 so a marketing unsubscribe does not silently suppress it. Leave
                 unset to inherit the transactional message's own setting.
+            tracked: Track opens and link clicks for this send. ``False`` keeps
+                links unrewritten (no click-tracking redirect) and adds no open
+                pixel, which matters for links carrying one-time codes. Leave
+                unset to inherit the transactional message's own setting.
+            disable_message_retention: Keep the rendered body out of Customer.io's
+                delivery history, for mail that carries links or codes nobody
+                should be able to read back later. Leave unset to inherit the
+                transactional message's own setting.
 
         Returns:
             A ``SendResult`` with the API response details.
@@ -578,6 +596,8 @@ class CustomerIOClient:
                 preheader=preheader,
                 headers=headers,
                 send_to_unsubscribed=send_to_unsubscribed,
+                tracked=tracked,
+                disable_message_retention=disable_message_retention,
             )
 
             context = f"to={to_str} template={transactional_message_id}"
@@ -615,6 +635,8 @@ class CustomerIOClient:
         preheader: str | None = None,
         headers: dict[str, str] | None = None,
         send_to_unsubscribed: bool | None = None,
+        tracked: bool | None = None,
+        disable_message_retention: bool | None = None,
     ) -> SendResult:
         """Send a plain-text transactional email with inline content.
 
@@ -633,6 +655,9 @@ class CustomerIOClient:
             preheader: Email preheader text (inbox preview).
             headers: Custom email headers — see :meth:`send_email`.
             send_to_unsubscribed: Send even to unsubscribed profiles — see
+                :meth:`send_email`.
+            tracked: Track opens and link clicks — see :meth:`send_email`.
+            disable_message_retention: Keep the body out of delivery history — see
                 :meth:`send_email`.
 
         Returns:
@@ -654,6 +679,8 @@ class CustomerIOClient:
             preheader=preheader,
             headers=headers,
             send_to_unsubscribed=send_to_unsubscribed,
+            tracked=tracked,
+            disable_message_retention=disable_message_retention,
         )
 
     def send_html(
@@ -669,6 +696,8 @@ class CustomerIOClient:
         preheader: str | None = None,
         headers: dict[str, str] | None = None,
         send_to_unsubscribed: bool | None = None,
+        tracked: bool | None = None,
+        disable_message_retention: bool | None = None,
     ) -> SendResult:
         """Send an HTML transactional email with inline content.
 
@@ -687,6 +716,9 @@ class CustomerIOClient:
             headers: Custom email headers — see :meth:`send_email`.
             send_to_unsubscribed: Send even to unsubscribed profiles — see
                 :meth:`send_email`.
+            tracked: Track opens and link clicks — see :meth:`send_email`.
+            disable_message_retention: Keep the body out of delivery history — see
+                :meth:`send_email`.
 
         Returns:
             A ``SendResult`` with the API response details.
@@ -702,6 +734,8 @@ class CustomerIOClient:
             preheader=preheader,
             headers=headers,
             send_to_unsubscribed=send_to_unsubscribed,
+            tracked=tracked,
+            disable_message_retention=disable_message_retention,
         )
 
     def _send_inline(
@@ -717,6 +751,8 @@ class CustomerIOClient:
         preheader: str | None = None,
         headers: dict[str, str] | None = None,
         send_to_unsubscribed: bool | None = None,
+        tracked: bool | None = None,
+        disable_message_retention: bool | None = None,
     ) -> SendResult:
         """Internal method to send inline-content transactional emails."""
         client = self.client  # Resolve eagerly — config/import errors must not be retried.
@@ -740,6 +776,8 @@ class CustomerIOClient:
                 preheader=preheader,
                 headers=headers,
                 send_to_unsubscribed=send_to_unsubscribed,
+                tracked=tracked,
+                disable_message_retention=disable_message_retention,
             )
 
             context = f"to={to_str} subject={subject!r}"

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-23
+
+### Added
+
+- `tracked` and `disable_message_retention` on `send_email()`, `send_text()` and
+  `send_html()`, forwarded to Customer.io's per-send fields of the same names. Like
+  `send_to_unsubscribed`, both are `bool | None`: unset inherits the transactional
+  message's dashboard setting, and `False` is forwarded rather than treated as unset. They
+  let a caller set tracking and body retention from code, since Customer.io's API cannot
+  change a message's own settings.
+
 ## [0.3.1] - 2026-09-15
 
 ### Fixed

@@ -682,6 +682,60 @@ class TestSendToUnsubscribed:
 
 
 # ------------------------------------------------------------------
+# tracked / disable_message_retention
+# ------------------------------------------------------------------
+
+
+class TestTrackedAndMessageRetention:
+    """Tests for the per-send ``tracked`` and ``disable_message_retention`` overrides."""
+
+    @pytest.mark.parametrize("field", ["tracked", "disable_message_retention"])
+    @pytest.mark.parametrize("value", [True, False])
+    def test_forwarded_on_template_send(
+        self, client_with_mock: Any, fake_api_client: MagicMock, field: str, value: bool
+    ) -> None:
+        """``False`` is a real instruction, so it is forwarded, not treated as unset."""
+        client_with_mock.send_email(to="recipient@example.com", transactional_message_id="3", **{field: value})
+        request = fake_api_client.send_email.call_args[0][0]
+        assert getattr(request, field) is value
+
+    @pytest.mark.parametrize("method", ["send_text", "send_html"])
+    def test_forwarded_on_inline_send(self, client_with_mock: Any, fake_api_client: MagicMock, method: str) -> None:
+        content = {"body": "Text"} if method == "send_text" else {"html": "<p>Text</p>"}
+        getattr(client_with_mock, method)(
+            to="recipient@example.com",
+            subject="Hello",
+            tracked=False,
+            disable_message_retention=True,
+            **content,
+        )
+        request = fake_api_client.send_email.call_args[0][0]
+        assert request.tracked is False
+        assert request.disable_message_retention is True
+
+    def test_on_the_wire(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        client_with_mock.send_email(
+            to="recipient@example.com",
+            transactional_message_id="3",
+            tracked=False,
+            disable_message_retention=True,
+        )
+        payload = fake_api_client.send_email.call_args[0][0]._to_dict()
+        assert payload["tracked"] is False
+        assert payload["disable_message_retention"] is True
+
+    def test_omitted_when_not_given(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
+        """Unset must stay unset, so the transactional message's own setting wins."""
+        client_with_mock.send_email(to="recipient@example.com", transactional_message_id="3")
+        request = fake_api_client.send_email.call_args[0][0]
+        assert request.tracked is None
+        assert request.disable_message_retention is None
+        payload = request._to_dict()
+        assert "tracked" not in payload
+        assert "disable_message_retention" not in payload
+
+
+# ------------------------------------------------------------------
 # Retry behavior
 # ------------------------------------------------------------------
 

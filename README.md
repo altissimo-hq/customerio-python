@@ -136,6 +136,28 @@ gateways and link scanners fetch URLs found in mail — so a `GET` should never 
 > transactional message is configured with in the Customer.io dashboard; pass `False` to
 > explicitly opt out. `False` is forwarded, not treated as unset.
 
+### Tracking and message retention
+
+Customer.io's dashboard defaults a new transactional message to open and click tracking
+**on**, and to keeping the rendered body in delivery history. Neither can be changed through
+Customer.io's API, but both can be overridden on each send:
+
+```python
+client.send_email(
+    to=user.email,
+    transactional_message_id="password_reset",
+    message_data={"action_url": reset_link},
+    # Click tracking rewrites links through a redirect, which can break one-time codes.
+    tracked=False,
+    # Keep the reset link out of delivery history.
+    disable_message_retention=True,
+)
+```
+
+Both are `bool | None`, like `send_to_unsubscribed`: unset inherits the message's dashboard
+setting, and `False` is forwarded. `tracked` covers opens and clicks together, and
+`send_text()` and `send_html()` accept both too.
+
 ## Configuration
 
 ### Environment Variables
@@ -150,11 +172,11 @@ gateways and link scanners fetch URLs found in mail — so a `GET` should never 
 ```python
 client = CustomerIOClient(
     app_api_key="your-api-key",
-    region="us",                          # "us" or "eu"
-    default_from="noreply@lived.com",     # default sender
-    max_retries=3,                        # retry transient failures
-    retry_delay=1.0,                      # base delay (seconds)
-    raise_on_error=True,                  # raise CustomerIOSendError on failure (default)
+    region="us",  # "us" or "eu"
+    default_from="noreply@lived.com",  # default sender
+    max_retries=3,  # retry transient failures
+    retry_delay=1.0,  # base delay (seconds)
+    raise_on_error=True,  # raise CustomerIOSendError on failure (default)
 )
 ```
 
