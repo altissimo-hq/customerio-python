@@ -700,18 +700,26 @@ class TestTrackedAndMessageRetention:
         assert getattr(request, field) is value
 
     @pytest.mark.parametrize("method", ["send_text", "send_html"])
-    def test_forwarded_on_inline_send(self, client_with_mock: Any, fake_api_client: MagicMock, method: str) -> None:
+    @pytest.mark.parametrize("field", ["tracked", "disable_message_retention"])
+    @pytest.mark.parametrize("value", [True, False])
+    def test_forwarded_on_inline_send(
+        self, client_with_mock: Any, fake_api_client: MagicMock, method: str, field: str, value: bool
+    ) -> None:
         content = {"body": "Text"} if method == "send_text" else {"html": "<p>Text</p>"}
-        getattr(client_with_mock, method)(
-            to="recipient@example.com",
-            subject="Hello",
-            tracked=False,
-            disable_message_retention=True,
-            **content,
-        )
+        getattr(client_with_mock, method)(to="recipient@example.com", subject="Hello", **content, **{field: value})
         request = fake_api_client.send_email.call_args[0][0]
-        assert request.tracked is False
-        assert request.disable_message_retention is True
+        assert getattr(request, field) is value
+
+    @pytest.mark.parametrize("method", ["send_text", "send_html"])
+    def test_omitted_on_inline_send_when_not_given(
+        self, client_with_mock: Any, fake_api_client: MagicMock, method: str
+    ) -> None:
+        """Unset stays off an inline request too, leaving Customer.io's own default."""
+        content = {"body": "Text"} if method == "send_text" else {"html": "<p>Text</p>"}
+        getattr(client_with_mock, method)(to="recipient@example.com", subject="Hello", **content)
+        payload = fake_api_client.send_email.call_args[0][0]._to_dict()
+        assert "tracked" not in payload
+        assert "disable_message_retention" not in payload
 
     def test_on_the_wire(self, client_with_mock: Any, fake_api_client: MagicMock) -> None:
         client_with_mock.send_email(
