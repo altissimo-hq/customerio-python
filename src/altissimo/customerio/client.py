@@ -7,7 +7,7 @@ import os
 import random
 import re
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, Unpack, cast
 
 from altissimo.customerio.exceptions import CustomerIOImportError
 from altissimo.customerio.models import EmailAddress, SendResult
@@ -39,6 +39,21 @@ _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 _CUSTOMERIO_STATUS_RE = re.compile(r"CustomerIOException'>: (\d{3}):")
 
 __all__ = ["CustomerIOClient"]
+
+
+class _RequestOptions(TypedDict, total=False):
+    """Per-send fields forwarded unchanged to ``SendEmailRequest``.
+
+    A field set to ``None`` is left off the request. ``False`` is kept, since it
+    is a meaningful value distinct from "let the transactional message decide".
+    Adding a field here and to the public send methods is all a new one needs.
+    """
+
+    preheader: str | None
+    headers: dict[str, str] | None
+    send_to_unsubscribed: bool | None
+    tracked: bool | None
+    disable_message_retention: bool | None
 
 
 def _get_regions_class() -> type[Regions]:
@@ -438,11 +453,7 @@ class CustomerIOClient:
         identifiers: dict[str, str] | None = None,
         reply_to: str | None = None,
         bcc: list[str] | None = None,
-        preheader: str | None = None,
-        headers: dict[str, str] | None = None,
-        send_to_unsubscribed: bool | None = None,
-        tracked: bool | None = None,
-        disable_message_retention: bool | None = None,
+        **options: Unpack[_RequestOptions],
     ) -> Any:
         """Build a ``SendEmailRequest`` from the given parameters.
 
@@ -454,53 +465,25 @@ class CustomerIOClient:
         except ImportError:
             raise CustomerIOImportError from None
 
-        # Build identifiers — default to recipient email if not provided
-        if identifiers is None:
-            identifiers = {"email": to}
-
+        fields: dict[str, Any] = {
+            "transactional_message_id": transactional_message_id,
+            "_from": from_email,
+            "subject": subject,
+            "body": body,
+            "message_data": message_data,
+            "reply_to": reply_to,
+            "bcc": bcc,
+            **options,
+        }
+        # ``is not None`` rather than truthy: ``False`` is a meaningful value the
+        # caller may want to send, distinct from "leave it unset and let the
+        # transactional message's own configuration decide".
         kwargs: dict[str, Any] = {
             "to": to,
-            "identifiers": identifiers,
+            # Default to the recipient's email if no identifiers were given.
+            "identifiers": identifiers if identifiers is not None else {"email": to},
+            **{key: value for key, value in fields.items() if value is not None},
         }
-
-        if transactional_message_id is not None:
-            kwargs["transactional_message_id"] = transactional_message_id
-
-        if from_email is not None:
-            kwargs["_from"] = from_email
-
-        if subject is not None:
-            kwargs["subject"] = subject
-
-        if body is not None:
-            kwargs["body"] = body
-
-        if message_data is not None:
-            kwargs["message_data"] = message_data
-
-        if reply_to is not None:
-            kwargs["reply_to"] = reply_to
-
-        if bcc is not None:
-            kwargs["bcc"] = bcc
-
-        if preheader is not None:
-            kwargs["preheader"] = preheader
-
-        if headers is not None:
-            kwargs["headers"] = headers
-
-        # Explicitly ``is not None`` rather than truthy: ``False`` is a meaningful
-        # value the caller may want to send, distinct from "leave it unset and let
-        # the transactional message's own configuration decide".
-        if send_to_unsubscribed is not None:
-            kwargs["send_to_unsubscribed"] = send_to_unsubscribed
-
-        if tracked is not None:
-            kwargs["tracked"] = tracked
-
-        if disable_message_retention is not None:
-            kwargs["disable_message_retention"] = disable_message_retention
 
         return SendEmailRequest(**kwargs)
 
@@ -756,11 +739,7 @@ class CustomerIOClient:
         reply_to: EmailAddressLike | None = None,
         bcc: EmailRecipients | None = None,
         identifiers: dict[str, str] | None = None,
-        preheader: str | None = None,
-        headers: dict[str, str] | None = None,
-        send_to_unsubscribed: bool | None = None,
-        tracked: bool | None = None,
-        disable_message_retention: bool | None = None,
+        **options: Unpack[_RequestOptions],
     ) -> SendResult:
         """Internal method to send inline-content transactional emails."""
         client = self.client  # Resolve eagerly — config/import errors must not be retried.
@@ -781,11 +760,7 @@ class CustomerIOClient:
                 identifiers=identifiers,
                 reply_to=reply_to_str,
                 bcc=bcc_list,
-                preheader=preheader,
-                headers=headers,
-                send_to_unsubscribed=send_to_unsubscribed,
-                tracked=tracked,
-                disable_message_retention=disable_message_retention,
+                **options,
             )
 
             context = f"to={to_str} subject={subject!r}"
