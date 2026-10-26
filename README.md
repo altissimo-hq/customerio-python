@@ -155,8 +155,12 @@ client.send_email(
 ```
 
 Both are `bool | None`, like `send_to_unsubscribed`: unset inherits the message's dashboard
-setting, and `False` is forwarded. `tracked` covers opens and clicks together, and
-`send_text()` and `send_html()` accept both too.
+setting, and `False` is forwarded. `tracked` covers opens and clicks together.
+
+`send_text()` and `send_html()` accept both too, but an inline send has no transactional
+message to inherit from: unset there means Customer.io's own default, which is tracking
+**on** and the body **retained**. Pass `tracked=False` and `disable_message_retention=True`
+explicitly for inline mail that carries one-time links or codes.
 
 ## Configuration
 

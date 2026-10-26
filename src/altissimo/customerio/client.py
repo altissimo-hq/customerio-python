@@ -656,9 +656,13 @@ class CustomerIOClient:
             headers: Custom email headers — see :meth:`send_email`.
             send_to_unsubscribed: Send even to unsubscribed profiles — see
                 :meth:`send_email`.
-            tracked: Track opens and link clicks — see :meth:`send_email`.
+            tracked: Track opens and link clicks — see :meth:`send_email`. An
+                inline send has no transactional message to inherit from, so
+                leaving this unset means Customer.io's default: tracking **on**.
+                Pass ``False`` for mail carrying one-time links or codes.
             disable_message_retention: Keep the body out of delivery history — see
-                :meth:`send_email`.
+                :meth:`send_email`. Leaving this unset means Customer.io's
+                default: the body **is** retained.
 
         Returns:
             A ``SendResult`` with the API response details.
@@ -716,9 +720,13 @@ class CustomerIOClient:
             headers: Custom email headers — see :meth:`send_email`.
             send_to_unsubscribed: Send even to unsubscribed profiles — see
                 :meth:`send_email`.
-            tracked: Track opens and link clicks — see :meth:`send_email`.
+            tracked: Track opens and link clicks — see :meth:`send_email`. An
+                inline send has no transactional message to inherit from, so
+                leaving this unset means Customer.io's default: tracking **on**.
+                Pass ``False`` for mail carrying one-time links or codes.
             disable_message_retention: Keep the body out of delivery history — see
-                :meth:`send_email`.
+                :meth:`send_email`. Leaving this unset means Customer.io's
+                default: the body **is** retained.
 
         Returns:
             A ``SendResult`` with the API response details.
