@@ -27,8 +27,11 @@ Customer.io transactional email and messaging client for Altissimo Python projec
 
 ## Installation
 
+Published on PyPI as [`altissimo-customerio`](https://pypi.org/project/altissimo-customerio/);
+the import name is `altissimo.customerio`.
+
 ```bash
-pip install altissimo-customerio[customerio]   # core + Customer.io SDK
+pip install "altissimo-customerio[customerio]"   # core + Customer.io SDK
 ```
 
 ## Quick Start
