@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-10-23
 
+First release published to PyPI, as `altissimo-customerio`. The import name is
+unchanged (`altissimo.customerio`).
+
 ### Added
 
 - `tracked` and `disable_message_retention` on `send_email()`, `send_text()` and
@@ -15,6 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message's dashboard setting, and `False` is forwarded rather than treated as unset. They
   let a caller set tracking and body retention from code, since Customer.io's API cannot
   change a message's own settings.
+- A publish workflow: tagged releases (`v*`) are tested, checked against the
+  package version, built, and uploaded to PyPI through Trusted Publishing
+  (environment `pypi`). Running it by hand uploads the current branch to
+  TestPyPI (environment `testpypi`).
+- Renovate configuration: a monthly grouped PR for minor/patch updates, monthly
+  `poetry.lock` maintenance, and security fixes at any time. This replaces
+  Dependabot.
+
+### Changed
+
+- The build requires `poetry-core>=2.2`, and CI uses Poetry 2.4.1 with actions
+  pinned by commit.
+- Dropped the License trove classifier (superseded by the SPDX `license`
+  expression) and the redundant `[tool.poetry] name`.
 
 ## [0.3.1] - 2026-09-15
 
